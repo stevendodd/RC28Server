@@ -3,18 +3,6 @@ import threading
 import time
 
 class RC28Controller:
-    # Mapping of light states to command bytes
-    LIGHT_MAP = {
-        (True, True, True): 0,    # Transmit, Left Orange, Right Orange on
-        (False, True, True): 1,   # Left Orange, Right Orange on
-        (True, False, True): 2,   # Transmit, Right Orange on
-        (False, False, True): 3,  # Right Orange on
-        (True, True, False): 4,   # Transmit, Left Orange on
-        (False, True, False): 5,  # Left Orange on
-        (True, False, False): 6,  # Transmit on
-        (False, False, False): 7  # All off
-    }
-
     def __init__(self, vendor_id=3110, product_id=30):
         """Initialize the controller with the device's vendor and product IDs."""
         self.h = hid.device()
@@ -22,6 +10,8 @@ class RC28Controller:
             self.h.open(vendor_id, product_id)
             self.h.set_nonblocking(1)
             print(f"Connected to {self.h.get_product_string()}")
+            # Initialize lights: link light on, others off
+            self.set_lights(False, False, False)
         except IOError as e:
             raise Exception(f"Failed to open device: {e}")
 
@@ -30,18 +20,22 @@ class RC28Controller:
             'button_release': [],
             'wheel': []
         }
+
         self.running = True
         self.thread = threading.Thread(target=self._read_loop, daemon=True)
         self.thread.start()
 
-    def set_lights(self, transmit, left_orange, right_orange):
-        """Set the state of the lights on the controller."""
-        key = (bool(transmit), bool(left_orange), bool(right_orange))
-        byte = self.LIGHT_MAP[key]
+    def _set_all_lights(self, transmit, left_orange, right_orange, link):
+        """Set the state of all four lights on the controller."""
+        value = (not transmit) * 1 + (not left_orange) * 2 + (not right_orange) * 4 + (not link) * 8
         try:
-            self.h.write([0x0, 0x1, byte])
+            self.h.write([0x0, 0x1, value])
         except IOError as e:
             print(f"Failed to set lights: {e}")
+
+    def set_lights(self, transmit, left_orange, right_orange):
+        """Set the state of the three user-controlled lights, keeping the link light on."""
+        self._set_all_lights(transmit, left_orange, right_orange, True)
 
     def register_callback(self, event_type, callback):
         """Register a callback function for a specific event type."""
@@ -81,4 +75,6 @@ class RC28Controller:
         """Close the connection to the device."""
         self.running = False
         self.thread.join()
+        # Turn off all lights before closing
+        self._set_all_lights(False, False, False, False)
         self.h.close()
