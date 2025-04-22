@@ -1,42 +1,34 @@
-import socket
-import select
 import queue
+import select
+import socket
 import threading
 import time
+
 from RC28Controller import RC28Controller
+
 
 def run_server(vendor_id=3110, product_id=30, port=5100):
     event_queue = queue.Queue()
     controller = RC28Controller(vendor_id, product_id)
-    
-    def event_handler():
-        while True:
-            # Read all available reports in a tight loop
-            while True:
-                d = controller.h.read(64)  # Read up to 64 bytes
-                if len(d) == 32 and d[0] == 1:  # Valid report
-                    if d[3] > 0:  # Wheel event
-                        val = d[1]
-                        if d[3] == 2:
-                            val = -val
-                        event_queue.put(('wheel', val))
-                    elif d[3] == 0:  # Button event
-                        if d[5] == 5:
-                            event_queue.put(('button_press', 'F1'))
-                        elif d[5] == 3:
-                            event_queue.put(('button_press', 'F2'))
-                        elif d[5] == 6:
-                            event_queue.put(('button_press', 'Transmit'))
-                        elif d[5] == 7:
-                            event_queue.put(('button_release',))
-                else:
-                    break  # No more data to read
-            time.sleep(0.001)  # Brief sleep to prevent CPU overuse
 
-    threading.Thread(target=event_handler, daemon=True).start()
+    # Define callback functions for RC28Controller events
+    def on_button_press(button):
+        event_queue.put(("button_press", button))
+
+    def on_button_release():
+        event_queue.put(("button_release",))
+
+    def on_wheel(val):
+        print(val)
+        event_queue.put(("wheel", val))
+
+    # Register callbacks with the controller
+    controller.register_callback("button_press", on_button_press)
+    controller.register_callback("button_release", on_button_release)
+    controller.register_callback("wheel", on_wheel)
 
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(('0.0.0.0', port))
+    server_socket.bind(("0.0.0.0", port))
     server_socket.listen(5)
     print(f"Server listening on port {port}")
     clients = []
@@ -57,7 +49,7 @@ def run_server(vendor_id=3110, product_id=30, port=5100):
                         print("Client disconnected")
                     else:
                         command = data.decode().strip()
-                        if command.startswith('SET_LIGHTS '):
+                        if command.startswith("SET_LIGHTS "):
                             parts = command.split()
                             if len(parts) == 4:
                                 T, L, R = map(int, parts[1:])
@@ -69,7 +61,7 @@ def run_server(vendor_id=3110, product_id=30, port=5100):
         try:
             while True:
                 event = event_queue.get(block=False)
-                event_str = ' '.join(map(str, event)) + '\n'
+                event_str = " ".join(map(str, event)) + "\n"
                 for client in list(clients):
                     try:
                         client.sendall(event_str.encode())
@@ -78,6 +70,7 @@ def run_server(vendor_id=3110, product_id=30, port=5100):
                         client.close()
         except queue.Empty:
             pass
+
 
 if __name__ == "__main__":
     run_server()
